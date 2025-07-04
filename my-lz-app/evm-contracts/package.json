@@ -1,0 +1,26 @@
+{
+  "name": "cross-chain-escrow-evm",
+  "version": "1.0.0",
+  "description": "EVM contracts for cross-chain escrow system",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "deploy:sepolia": "hardhat run scripts/deploy-escrow.js --network sepolia",
+    "deploy:local": "hardhat run scripts/deploy-escrow.js --network localhost"
+  },
+  "devDependencies": {
+    "@nomiclabs/hardhat-ethers": "^2.2.3",
+    "@nomiclabs/hardhat-waffle": "^2.0.6",
+    "chai": "^4.3.7",
+    "ethereum-waffle": "^4.0.10",
+    "ethers": "^5.7.2",
+    "hardhat": "^2.19.0"
+  },
+  "dependencies": {
+    "@layerzerolabs/lz-evm-messagelib-v2": "^2.3.44",
+    "@layerzerolabs/lz-evm-protocol-v2": "^2.3.44",
+    "@layerzerolabs/oapp-evm": "^0.0.4",
+    "@openzeppelin/contracts": "^4.9.0",
+    "bs58": "^6.0.0"
+  }
+}
