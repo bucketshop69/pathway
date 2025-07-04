@@ -1,0 +1,34 @@
+
+# Anchor
+.anchor/
+target/
+**/*.rs.bk
+
+# Node
+node_modules/
+.yarn/
+yarn.lock
+package-lock.json
+
+# Solana
+test-ledger/
+.program_test/
+.solana/
+test-validator-keypair.json
+
+# Build artifacts
+*.so
+target/deploy/
+target/bpf-out/
+target/sbf-out/
+Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+*.swp
+*.swo
+*~
