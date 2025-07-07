@@ -1,28 +1,28 @@
 import { EndpointId } from '@layerzerolabs/lz-definitions'
 import { ExecutorOptionType } from '@layerzerolabs/lz-v2-utilities'
-import { generateConnectionsConfig } from '@layerzerolabs/metadata-tools'
+import { TwoWayConfig, generateConnectionsConfig } from '@layerzerolabs/metadata-tools'
 import { OAppEnforcedOption, OmniPointHardhat } from '@layerzerolabs/toolbox-hardhat'
 
-import { getOftStoreAddress } from './tasks/solana'
+import { getSolanaOAppAddress } from './tasks/solana'
 
-// Note:  Do not use address for EVM OmniPointHardhat contracts.  Contracts are loaded using hardhat-deploy.
-// If you do use an address, ensure artifacts exists.
-const sepoliaContract: OmniPointHardhat = {
-    eid: EndpointId.SEPOLIA_V2_TESTNET,
-    address: '0xbC55f13ca56a7f6aA31A1a5fEf74e395ab93B845',
+const optimismContract: OmniPointHardhat = {
+    eid: EndpointId.OPTSEP_V2_TESTNET,
+    contractName: 'MyOApp',
 }
 
 const solanaContract: OmniPointHardhat = {
     eid: EndpointId.SOLANA_V2_TESTNET,
-    address: getOftStoreAddress(EndpointId.SOLANA_V2_TESTNET),
+    address: getSolanaOAppAddress(EndpointId.SOLANA_V2_TESTNET), // NOTE: replace with the oapp account address
 }
 
+// For this example's simplicity, we will use the same enforced options values for sending to all chains
+// For production, you should ensure `gas` is set to the correct value through profiling the gas usage of calling OApp._lzReceive(...) on the destination chain
+// To learn more, read https://docs.layerzero.network/v2/concepts/applications/oapp-standard#execution-options-and-enforced-settings
 const EVM_ENFORCED_OPTIONS: OAppEnforcedOption[] = [
     {
         msgType: 1,
         optionType: ExecutorOptionType.LZ_RECEIVE,
-        gas: 80000,
-        value: 0,
+        gas: 100_000,
     },
 ]
 
@@ -30,28 +30,30 @@ const SOLANA_ENFORCED_OPTIONS: OAppEnforcedOption[] = [
     {
         msgType: 1,
         optionType: ExecutorOptionType.LZ_RECEIVE,
-        gas: 200000,
-        value: 2500000,
+        gas: 100_000,
     },
 ]
 
-// Learn about Message Execution Options: https://docs.layerzero.network/v2/developers/solana/oft/account#message-execution-options
-// Learn more about the Simple Config Generator - https://docs.layerzero.network/v2/developers/evm/technical-reference/simple-config
-export default async function () {
-    // note: pathways declared here are automatically bidirectional
-    // if you declare A,B there's no need to declare B,A
-    const connections = await generateConnectionsConfig([
-        [
-            sepoliaContract, // Chain A contract
-            solanaContract, // Chain B contract
-            [['LayerZero Labs'], []], // [ requiredDVN[], [ optionalDVN[], threshold ] ]
-            [15, 32], // [A to B confirmations, B to A confirmations]
-            [SOLANA_ENFORCED_OPTIONS, EVM_ENFORCED_OPTIONS], // Chain B enforcedOptions, Chain A enforcedOptions
-        ],
-    ])
+// To connect all the above chains to each other, we need the following pathways:
+// Optimism <-> Solana
 
+// With the config generator, pathways declared are automatically bidirectional
+// i.e. if you declare A,B there's no need to declare B,A
+const pathways: TwoWayConfig[] = [
+    [
+        optimismContract, // Chain A contract
+        solanaContract, // Chain C contract
+        [['LayerZero Labs'], []], // [ requiredDVN[], [ optionalDVN[], threshold ] ]
+        [1, 32], // [A to B confirmations, B to A confirmations]
+        [SOLANA_ENFORCED_OPTIONS, EVM_ENFORCED_OPTIONS], // Chain C enforcedOptions, Chain A enforcedOptions
+    ],
+]
+
+export default async function () {
+    // Generate the connections config based on the pathways
+    const connections = await generateConnectionsConfig(pathways)
     return {
-        contracts: [{ contract: sepoliaContract }, { contract: solanaContract }],
+        contracts: [{ contract: optimismContract }, { contract: solanaContract }],
         connections,
     }
 }

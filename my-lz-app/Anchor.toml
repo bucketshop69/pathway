@@ -1,22 +1,18 @@
 [toolchain]
-anchor_version = "0.29.0"
 
 [features]
 seeds = false
 skip-lint = false
 
 [programs.localnet]
-oft = "2nXbNz4c1Rv6ba9jJucNWgTTuNbYGZYYRhE6MnoLc17v"
-
-[programs.devnet]
-oft = "2nXbNz4c1Rv6ba9jJucNWgTTuNbYGZYYRhE6MnoLc17v"
+my_oapp = "Eatvyksra7sosFDrfsgbqYPbQz8nTXXJ8GXG2spFS2Nn"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "Devnet"
-wallet = "./junk-id.json"
+cluster = "Localnet"
+wallet = "/home/main-user/.config/solana/id.json"
 
 [scripts]
-test = "~/.cargo/bin/anchor test --skip-deploy"
+test = "yarn run ts-mocha -b -p ./tsconfig.json -t 10000000 sdk/tests/**/*.test.ts"

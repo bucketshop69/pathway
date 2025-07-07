@@ -1,5 +1,4 @@
-import { fetchMint } from '@metaplex-foundation/mpl-toolbox'
-import { publicKey, unwrapOption } from '@metaplex-foundation/umi'
+import { publicKey } from '@metaplex-foundation/umi'
 import { toWeb3JsPublicKey } from '@metaplex-foundation/umi-web3js-adapters'
 import { Keypair, PublicKey } from '@solana/web3.js'
 import { task } from 'hardhat/config'
@@ -8,52 +7,40 @@ import { OmniPoint, denormalizePeer } from '@layerzerolabs/devtools'
 import { types } from '@layerzerolabs/devtools-evm-hardhat'
 import { EndpointId, getNetworkForChainId } from '@layerzerolabs/lz-definitions'
 import { EndpointPDADeriver, EndpointProgram } from '@layerzerolabs/lz-solana-sdk-v2'
-import { OftPDA, oft } from '@layerzerolabs/oft-v2-solana-sdk'
 import { EndpointV2 } from '@layerzerolabs/protocol-devtools-solana'
 
+import { MyOAppPDA, myoapp } from '../../lib/client'
 import { getSolanaReceiveConfig, getSolanaSendConfig } from '../common/taskHelper'
 import { DebugLogger, createSolanaConnectionFactory, decodeLzReceiveOptions, uint8ArrayToHex } from '../common/utils'
 
-import { deriveConnection, getSolanaDeployment } from './index'
+import { deriveConnection, getSolanaOAppAddress } from './index'
 
 const DEBUG_ACTIONS = {
-    OFT_STORE: 'oft-store',
+    STORE: 'store',
     GET_ADMIN: 'admin',
     GET_DELEGATE: 'delegate',
     CHECKS: 'checks',
-    GET_TOKEN: 'token',
     GET_PEERS: 'peers',
 }
 
-/**
- * Get the OFTStore account from the task arguments, the deployment file, or throw an error.
- * @param {EndpointId} eid
- * @param {string} oftStore
- */
-const getOftStore = (eid: EndpointId, oftStore?: string) => publicKey(oftStore ?? getSolanaDeployment(eid).oftStore)
-
 type DebugTaskArgs = {
     eid: EndpointId
-    oftStore?: string
+    store?: string
     endpoint: string
     dstEids: EndpointId[]
     action?: string
 }
 
-task('lz:oft:solana:debug', 'Manages OFTStore and OAppRegistry information')
+const getStore = (eid: EndpointId, store?: string) => publicKey(store ?? getSolanaOAppAddress(eid))
+
+task('lz:oapp:solana:debug', 'Prints OApp Store and Peer information')
     .addParam(
         'eid',
         'Solana mainnet (30168) or testnet (40168).  Defaults to mainnet.',
         EndpointId.SOLANA_V2_MAINNET,
         types.eid
     )
-    .addParam(
-        'oftStore',
-        'The OFTStore public key. Derived from deployments if not provided.',
-        undefined,
-        types.string,
-        true
-    )
+    .addParam('store', 'The Store public key. Derived from deployments if not provided.', undefined, types.string, true)
     .addParam('endpoint', 'The Endpoint public key', EndpointProgram.PROGRAM_ID.toBase58(), types.string)
     .addOptionalParam('dstEids', 'Destination eids to check (comma-separated list)', [], types.csv)
     .addOptionalParam(
@@ -63,22 +50,20 @@ task('lz:oft:solana:debug', 'Manages OFTStore and OAppRegistry information')
         types.string
     )
     .setAction(async (taskArgs: DebugTaskArgs) => {
-        const { eid, oftStore: oftStoreArg, endpoint, dstEids, action } = taskArgs
+        const { eid, store: storeArg, endpoint, dstEids, action } = taskArgs
         const { umi, connection } = await deriveConnection(eid, true)
-        const oftStore = getOftStore(eid, oftStoreArg)
+        const store = getStore(eid, storeArg)
 
-        let oftStoreInfo
+        let storeInfo
         try {
-            oftStoreInfo = await oft.accounts.fetchOFTStore(umi, oftStore)
+            storeInfo = await myoapp.accounts.fetchStore(umi, store)
         } catch (e) {
-            console.error(`Failed to fetch OFTStore at ${oftStore.toString()}:`, e)
+            console.error(`Failed to fetch Store at ${store.toString()}:`, e)
             return
         }
 
-        const mintAccount = await fetchMint(umi, publicKey(oftStoreInfo.tokenMint))
-
         const epDeriver = new EndpointPDADeriver(new PublicKey(endpoint))
-        const [oAppRegistry] = epDeriver.oappRegistry(toWeb3JsPublicKey(oftStore))
+        const [oAppRegistry] = epDeriver.oappRegistry(toWeb3JsPublicKey(store))
         const oAppRegistryInfo = await EndpointProgram.accounts.OAppRegistry.fromAccountAddress(
             connection,
             oAppRegistry
@@ -89,21 +74,19 @@ task('lz:oft:solana:debug', 'Manages OFTStore and OAppRegistry information')
             return
         }
 
-        const oftDeriver = new OftPDA(oftStoreInfo.header.owner)
+        const oappDeriver = new MyOAppPDA(storeInfo.header.owner)
 
-        const printOftStore = async () => {
-            DebugLogger.header('OFT Store Information')
-            DebugLogger.keyValue('Owner', oftStoreInfo.header.owner)
-            DebugLogger.keyValue('OFT Type', oft.types.OFTType[oftStoreInfo.oftType])
-            DebugLogger.keyValue('Admin', oftStoreInfo.admin)
-            DebugLogger.keyValue('Token Mint', oftStoreInfo.tokenMint)
-            DebugLogger.keyValue('Token Escrow', oftStoreInfo.tokenEscrow)
-            DebugLogger.keyValue('Endpoint Program', oftStoreInfo.endpointProgram)
+        const printStore = async () => {
+            DebugLogger.header('Store Information')
+            DebugLogger.keyValue('Owner', storeInfo.header.owner)
+            DebugLogger.keyValue('Admin', storeInfo.admin)
+            DebugLogger.keyValue('Endpoint Program', storeInfo.endpointProgram)
+            DebugLogger.keyValue('String', storeInfo.string)
             DebugLogger.separator()
         }
 
         const printAdmin = async () => {
-            const admin = oftStoreInfo.admin
+            const admin = storeInfo.admin
             DebugLogger.keyValue('Admin', admin)
         }
 
@@ -114,37 +97,23 @@ task('lz:oft:solana:debug', 'Manages OFTStore and OAppRegistry information')
             DebugLogger.separator()
         }
 
-        const printToken = async () => {
-            DebugLogger.header('Token Information')
-            DebugLogger.keyValue('Mint Authority', unwrapOption(mintAccount.mintAuthority))
-            DebugLogger.keyValue(
-                'Freeze Authority',
-                unwrapOption(mintAccount.freezeAuthority, () => 'None')
-            )
-            DebugLogger.separator()
-        }
-
         const printChecks = async () => {
             const delegate = oAppRegistryInfo?.delegate?.toBase58()
 
             DebugLogger.header('Checks')
-            DebugLogger.keyValue('Admin (Owner) same as Delegate', oftStoreInfo.admin === delegate)
-            DebugLogger.keyValue(
-                'Token Mint Authority is OFT Store',
-                unwrapOption(mintAccount.mintAuthority) === oftStore
-            )
+            DebugLogger.keyValue('Admin (Owner) same as Delegate', storeInfo.admin === delegate)
             DebugLogger.separator()
         }
 
         const printPeerConfigs = async () => {
             const peerConfigs = dstEids.map((dstEid) => {
-                const peerConfig = oftDeriver.peer(oftStore, dstEid)
+                const peerConfig = oappDeriver.peer(dstEid)
                 return publicKey(peerConfig)
             })
             const mockKeypair = new Keypair()
             const point: OmniPoint = {
                 eid,
-                address: oftStore.toString(),
+                address: store.toString(),
             }
             const endpointV2Sdk = new EndpointV2(
                 await createSolanaConnectionFactory()(eid),
@@ -154,13 +123,13 @@ task('lz:oft:solana:debug', 'Manages OFTStore and OAppRegistry information')
 
             DebugLogger.header('Peer Configurations')
 
-            const peerConfigInfos = await oft.accounts.safeFetchAllPeerConfig(umi, peerConfigs)
+            const peerConfigInfos = await myoapp.accounts.fetchAllPeerConfig(umi, peerConfigs)
             for (let index = 0; index < dstEids.length; index++) {
                 const dstEid = dstEids[index]
                 const info = peerConfigInfos[index]
                 const network = getNetworkForChainId(dstEid)
-                const oAppReceiveConfig = await getSolanaReceiveConfig(endpointV2Sdk, dstEid, oftStore)
-                const oAppSendConfig = await getSolanaSendConfig(endpointV2Sdk, dstEid, oftStore)
+                const oAppReceiveConfig = await getSolanaReceiveConfig(endpointV2Sdk, dstEid, store)
+                const oAppSendConfig = await getSolanaSendConfig(endpointV2Sdk, dstEid, store)
 
                 // Show the chain info
                 DebugLogger.header(`${dstEid} (${network.chainName})`)
@@ -193,8 +162,8 @@ task('lz:oft:solana:debug', 'Manages OFTStore and OAppRegistry information')
         }
         if (action) {
             switch (action) {
-                case DEBUG_ACTIONS.OFT_STORE:
-                    await printOftStore()
+                case DEBUG_ACTIONS.STORE:
+                    await printStore()
                     break
                 case DEBUG_ACTIONS.GET_ADMIN:
                     await printAdmin()
@@ -205,9 +174,6 @@ task('lz:oft:solana:debug', 'Manages OFTStore and OAppRegistry information')
                 case DEBUG_ACTIONS.CHECKS:
                     await printChecks()
                     break
-                case DEBUG_ACTIONS.GET_TOKEN:
-                    await printToken()
-                    break
                 case DEBUG_ACTIONS.GET_PEERS:
                     await printPeerConfigs()
                     break
@@ -215,9 +181,8 @@ task('lz:oft:solana:debug', 'Manages OFTStore and OAppRegistry information')
                     console.error(`Invalid action specified. Use any of ${Object.keys(DEBUG_ACTIONS)}.`)
             }
         } else {
-            await printOftStore()
+            await printStore()
             await printDelegate()
-            await printToken()
             if (dstEids.length > 0) await printPeerConfigs()
             await printChecks()
         }

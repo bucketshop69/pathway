@@ -1,6 +1,5 @@
-import { web3 } from '@coral-xyz/anchor'
 import { toWeb3JsKeypair } from '@metaplex-foundation/umi-web3js-adapters'
-import { ComputeBudgetProgram, Keypair, sendAndConfirmTransaction } from '@solana/web3.js'
+import { ComputeBudgetProgram, Keypair, Transaction, sendAndConfirmTransaction } from '@solana/web3.js'
 import bs58 from 'bs58'
 import { task } from 'hardhat/config'
 
@@ -24,7 +23,7 @@ interface Args {
     withPriorityFee: number
 }
 
-task('lz:oft:solana:retry-payload', 'Retry a stored payload on Solana')
+task('lz:oapp:solana:retry-payload', 'Retry a stored payload on Solana')
     .addParam('srcEid', 'The source EndpointId', undefined, types.eid)
     .addParam('nonce', 'The nonce of the payload', undefined, types.bigint)
     .addParam('sender', 'The source OApp address (hex)', undefined, types.string)
@@ -55,7 +54,7 @@ task('lz:oft:solana:retry-payload', 'Retry a stored payload on Solana')
             const { connection, umiWalletKeyPair } = await deriveConnection(dstEid)
             const signer = toWeb3JsKeypair(umiWalletKeyPair)
             const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash()
-            const tx = new web3.Transaction({
+            const tx = new Transaction({
                 feePayer: signer.publicKey,
                 blockhash,
                 lastValidBlockHeight,
@@ -68,12 +67,9 @@ task('lz:oft:solana:retry-payload', 'Retry a stored payload on Solana')
                     nonce: nonce.toString(),
                     srcEid,
                     sender: makeBytes32(sender),
-                    dstEid,
                     receiver,
-                    payload: '', // unused;  just added to satisfy typing
                     guid,
                     message: payload, // referred to as "payload" in scan-api
-                    version: 1, // unused;  just added to satisfy typing
                 },
                 Uint8Array.from([computeUnits, lamports]),
                 'confirmed'
@@ -92,7 +88,7 @@ task('lz:oft:solana:retry-payload', 'Retry a stored payload on Solana')
             const keypair = Keypair.fromSecretKey(bs58.decode(process.env.SOLANA_PRIVATE_KEY))
             tx.sign(keypair)
 
-            const signature = await sendAndConfirmTransaction(connection, tx, [keypair], { skipPreflight: true })
+            const signature = await sendAndConfirmTransaction(connection, tx, [keypair])
             console.log(
                 `View Solana transaction here: ${getExplorerTxLink(signature.toString(), dstEid == EndpointId.SOLANA_V2_TESTNET)}`
             )

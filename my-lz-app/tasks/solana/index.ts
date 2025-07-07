@@ -24,21 +24,100 @@ import {
 import { createUmi } from '@metaplex-foundation/umi-bundle-defaults'
 import { createWeb3JsEddsa } from '@metaplex-foundation/umi-eddsa-web3js'
 import { toWeb3JsInstruction, toWeb3JsPublicKey } from '@metaplex-foundation/umi-web3js-adapters'
-import { AddressLookupTableAccount, Connection } from '@solana/web3.js'
-import { getSimulationComputeUnits } from '@solana-developers/helpers'
+import { AddressLookupTableAccount, Connection, Keypair } from '@solana/web3.js'
+import { getKeypairFromEnvironment, getKeypairFromFile, getSimulationComputeUnits } from '@solana-developers/helpers'
 import { backOff } from 'exponential-backoff'
 
 import { formatEid } from '@layerzerolabs/devtools'
-import { getPrioritizationFees, getSolanaKeypair } from '@layerzerolabs/devtools-solana'
-import { promptToContinue } from '@layerzerolabs/io-devtools'
+import { getPrioritizationFees } from '@layerzerolabs/devtools-solana'
+import { createLogger, promptToContinue } from '@layerzerolabs/io-devtools'
 import { EndpointId, endpointIdToNetwork } from '@layerzerolabs/lz-definitions'
-import { OftPDA } from '@layerzerolabs/oft-v2-solana-sdk'
 
-import { DebugLogger, KnownWarnings, createSolanaConnectionFactory } from '../common/utils'
+import { MyOApp } from '../../lib/client/myoapp'
+import { DebugLogger, KnownErrors, createSolanaConnectionFactory } from '../common/utils'
 
 const LOOKUP_TABLE_ADDRESS: Partial<Record<EndpointId, PublicKey>> = {
     [EndpointId.SOLANA_V2_MAINNET]: publicKey('AokBxha6VMLLgf97B5VYHEtqztamWmYERBmmFvjuTzJB'),
     [EndpointId.SOLANA_V2_TESTNET]: publicKey('9thqPdbR27A1yLWw2spwJLySemiGMXxPnEvfmXVk4KuK'),
+}
+
+// create a safe version of getKeypairFromFile that returns undefined if the file does not exist, for checking the default keypair
+async function safeGetKeypairDefaultPath(filePath?: string) {
+    try {
+        return await getKeypairFromFile(filePath)
+    } catch (error) {
+        // If the error is due to the file not existing, return undefined
+        if (error instanceof Error && error.message.includes('Could not read keypair')) {
+            return undefined
+        }
+        throw error // Rethrow if it's a different error
+    }
+}
+
+// TODO in another PR: consider moving keypair related functions to tasks/solana/utils.ts
+async function getSolanaKeypair(readOnly = false): Promise<Keypair> {
+    const logger = createLogger()
+
+    // Early exit if read-only: ephemeral Keypair is enough.
+    if (readOnly) {
+        logger.info('Read-only mode: Using ephemeral (randomly generated) keypair.')
+        return Keypair.generate()
+    }
+
+    // Attempt to load from each source
+    const keypairEnvPrivate = process.env.SOLANA_PRIVATE_KEY
+        ? getKeypairFromEnvironment('SOLANA_PRIVATE_KEY')
+        : undefined // #1 SOLANA_PRIVATE_KEY
+    const keypairEnvPath = process.env.SOLANA_KEYPAIR_PATH
+        ? await getKeypairFromFile(process.env.SOLANA_KEYPAIR_PATH)
+        : undefined // #2 SOLANA_KEYPAIR_PATH
+    const keypairDefaultPath = await safeGetKeypairDefaultPath() // #3 ~/.config/solana/id.json
+
+    // Throw if no keypair is found via all 3 methods
+    if (!keypairEnvPrivate && !keypairEnvPath && !keypairDefaultPath) {
+        throw new Error(
+            'No Solana keypair found. Provide SOLANA_PRIVATE_KEY, ' +
+                'SOLANA_KEYPAIR_PATH, or place a valid keypair at ~/.config/solana/id.json.'
+        )
+    }
+
+    // If both environment-based keys exist, ensure they match
+    if (keypairEnvPrivate && keypairEnvPath) {
+        if (keypairEnvPrivate.publicKey.equals(keypairEnvPath.publicKey)) {
+            logger.info('Both SOLANA_PRIVATE_KEY and SOLANA_KEYPAIR_PATH match. Using environment-based keypair.')
+            return keypairEnvPrivate
+        } else {
+            throw new Error(
+                `Conflict: SOLANA_PRIVATE_KEY and SOLANA_KEYPAIR_PATH are different keypairs.\n` +
+                    `Path: ${process.env.SOLANA_KEYPAIR_PATH} => ${keypairEnvPath.publicKey.toBase58()}\n` +
+                    `Env : ${keypairEnvPrivate.publicKey.toBase58()}`
+            )
+        }
+    }
+
+    // If exactly one environment-based keypair is found, use it immediately
+    if (keypairEnvPrivate) {
+        logger.info(`Using Solana keypair from SOLANA_PRIVATE_KEY => ${keypairEnvPrivate.publicKey.toBase58()}`)
+        return keypairEnvPrivate
+    }
+
+    if (keypairEnvPath) {
+        logger.info(
+            `Using Solana keypair from SOLANA_KEYPAIR_PATH (${process.env.SOLANA_KEYPAIR_PATH}) => ${keypairEnvPath.publicKey.toBase58()}`
+        )
+        return keypairEnvPath
+    }
+
+    // Otherwise, default path is the last fallback
+    logger.info(
+        `No environment-based keypair found. Found keypair at default path => ${keypairDefaultPath.publicKey.toBase58()}`
+    )
+    const doContinue = await promptToContinue(
+        `Defaulting to ~/.config/solana/id.json with address ${keypairDefaultPath.publicKey.toBase58()}. Use this keypair?`
+    )
+    if (!doContinue) process.exit(1)
+
+    return keypairDefaultPath
 }
 
 /**
@@ -76,15 +155,15 @@ export const useWeb3Js = async () => {
 export const deriveKeys = (programIdStr: string) => {
     const programId = publicKey(programIdStr)
     const eddsa: EddsaInterface = createWeb3JsEddsa()
-    const oftDeriver = new OftPDA(programId)
+    const myoappDeriver = new MyOApp(programId)
     const lockBox = eddsa.generateKeypair()
     const escrowPK = lockBox.publicKey
-    const [oftStorePda] = oftDeriver.oftStore(escrowPK)
+    const [oappPda] = myoappDeriver.pda.oapp()
     return {
         programId,
         lockBox,
         escrowPK,
-        oftStorePda,
+        oappPda,
         eddsa,
     }
 }
@@ -93,62 +172,46 @@ export const deriveKeys = (programIdStr: string) => {
  * Outputs the OFT accounts to a JSON file.
  * @param eid {EndpointId}
  * @param programId {string}
- * @param mint {string}
- * @param mintAuthority {string}
- * @param escrow {string}
- * @param oftStore {string}
+ * @param oapp {string}
  */
-export const saveSolanaDeployment = (
-    eid: EndpointId,
-    programId: string,
-    mint: string,
-    mintAuthority: string,
-    escrow: string,
-    oftStore: string
-) => {
+export const saveSolanaDeployment = (eid: EndpointId, programId: string, oapp: string) => {
     const outputDir = `./deployments/${endpointIdToNetwork(eid)}`
     if (!existsSync(outputDir)) {
         mkdirSync(outputDir, { recursive: true })
     }
     writeFileSync(
-        `${outputDir}/OFT.json`,
+        `${outputDir}/OApp.json`,
         JSON.stringify(
             {
                 programId,
-                mint,
-                mintAuthority,
-                escrow,
-                oftStore,
+                oapp,
             },
             null,
             4
         )
     )
-    console.log(`Accounts have been saved to ${outputDir}/OFT.json`)
+    console.log(`Accounts have been saved to ${outputDir}/OApp.json`)
 }
 
 /**
  * Reads the OFT deployment info from disk for the given endpoint ID.
  * @param eid {EndpointId}
- * @returns The contents of the OFT.json file as a JSON object.
+ * @returns The contents of the OApp.json file as a JSON object.
  */
 export const getSolanaDeployment = (
     eid: EndpointId
 ): {
     programId: string
-    mint: string
-    mintAuthority: string
-    escrow: string
-    oftStore: string
+    oapp: string
 } => {
     if (!eid) {
         throw new Error('eid is required')
     }
     const outputDir = path.join('deployments', endpointIdToNetwork(eid))
-    const filePath = path.join(outputDir, 'OFT.json') // Note: if you have multiple deployments, change this filename to refer to the desired deployment file
+    const filePath = path.join(outputDir, 'OApp.json') // Note: if you have multiple deployments, change this filename to refer to the desired deployment file
 
     if (!existsSync(filePath)) {
-        DebugLogger.printWarning(KnownWarnings.SOLANA_DEPLOYMENT_NOT_FOUND)
+        DebugLogger.printErrorAndFixSuggestion(KnownErrors.SOLANA_DEPLOYMENT_NOT_FOUND)
         throw new Error(`Could not find Solana deployment file for eid ${eid} at: ${filePath}`)
     }
 
@@ -156,29 +219,12 @@ export const getSolanaDeployment = (
     return JSON.parse(fileContents)
 }
 
-/**
- * Safely load the OFT store PDA for a given Solana endpoint.
- * Logs a warning if the deployment file is missing or malformed,
- * and returns null so consumers can decide how to proceed.
- */
-export const getOftStoreAddress = (eid: EndpointId): string | null => {
-    try {
-        const { oftStore } = getSolanaDeployment(eid)
-        if (!oftStore) {
-            DebugLogger.printWarning(
-                KnownWarnings.SOLANA_DEPLOYMENT_MISSING_OFT_STORE,
-                `deployment file for ${endpointIdToNetwork(eid)} (eid ${eid}) missing 'oftStore' field.`
-            )
-            return null
-        }
-        return oftStore
-    } catch (err: any) {
-        DebugLogger.printWarning(
-            KnownWarnings.ERROR_LOADING_SOLANA_DEPLOYMENT,
-            `Could not load Solana deployment for ${endpointIdToNetwork(eid)} (eid ${eid}): ${err.message}`
-        )
-        return null
+export const getSolanaOAppAddress = (eid: EndpointId) => {
+    const { oapp } = getSolanaDeployment(eid)
+    if (!oapp) {
+        throw new Error('oapp not defined in the deployment file')
     }
+    return oapp
 }
 
 // TODO: move below outside of solana folder since it's generic
@@ -214,6 +260,7 @@ export enum TransactionType {
     SetAuthority = 'SetAuthority',
     InitConfig = 'InitConfig',
     SendOFT = 'SendOFT',
+    SendMessage = 'SendMessage',
 }
 
 const TransactionCuEstimates: Record<TransactionType, number> = {
@@ -224,6 +271,7 @@ const TransactionCuEstimates: Record<TransactionType, number> = {
     [TransactionType.SetAuthority]: 8_000, // actual sample: 6424, 6472
     [TransactionType.InitConfig]: 42_000, // actual sample: 33157, 40657
     [TransactionType.SendOFT]: 230_000, // actual sample: 217,784
+    [TransactionType.SendMessage]: 230_000, // this is an estimate, not based on actual sample
 }
 
 export const getComputeUnitPriceAndLimit = async (
@@ -243,6 +291,7 @@ export const getComputeUnitPriceAndLimit = async (
         computeUnits = await backOff(
             () =>
                 getSimulationComputeUnits(
+                    // @ts-expect-error complain about the type of connection, but it's good. cause: versions differing.
                     connection,
                     ixs.map((ix) => toWeb3JsInstruction(ix)),
                     toWeb3JsPublicKey(wallet.publicKey),

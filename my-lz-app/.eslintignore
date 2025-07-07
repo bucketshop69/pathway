@@ -1,10 +1,8 @@
-.anchor
-.turbo
-node_modules
-target
+lib/client/generated/
 artifacts
 cache
 dist
+node_modules
 out
 *.log
 *.sol

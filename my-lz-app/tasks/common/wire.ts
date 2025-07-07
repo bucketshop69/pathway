@@ -81,7 +81,7 @@ task(TASK_LZ_OAPP_WIRE)
         // Then we grab the programId from the args
         const programId = new PublicKey(solanaDeployment.programId)
 
-        // TODO: refactor to instead use a function such as verifySolanaDeployment that also checks for oftStore key
+        // TODO: refactor to instead use a function such as verifySolanaDeployment that also checks for oapp key
         if (!programId) {
             logger.error('Missing programId in solana deployment')
             return
@@ -137,7 +137,7 @@ task(TASK_LZ_OAPP_WIRE)
                                     connection.vector.to.eid,
                                     solanaConnection,
                                     new PublicKey(connection.config.sendLibrary),
-                                    new PublicKey(solanaDeployment.oftStore)
+                                    new PublicKey(solanaDeployment.oapp)
                                 )
 
                                 if (sendConfig == null) {
