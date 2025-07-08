@@ -282,6 +282,26 @@ npx hardhat --network optimism-testnet lz:oapp:send --from-eid 40232 --dst-eid 4
 
 :information_source: For the list of supported chains and their endpoint ID's refer to the [Deployed Endpoints](https://docs.layerzero.network/v2/deployments/deployed-contracts) page.
 
+## Current Deployment Information
+
+This repository has working deployments on testnets:
+
+### Solana Program (Devnet)
+- **Program ID**: `9jpCuRru6RpBBXSZQcpSnw9WT347up5fFLvLZrRfznih`
+- **Store Account**: `F4AdQjEWu1mBht7NuaGq6AbMieQTnQ1AGATYARNSMgBj`
+- **Network**: Solana Devnet
+- **Endpoint ID**: `40168`
+
+### EVM Contract (Optimism Sepolia)
+- **Contract Address**: `0xc09A826dA13ee506D1BDBD374C53C112185a23bc`
+- **Network**: Optimism Sepolia Testnet
+- **Endpoint ID**: `40232`
+
+### Example Transactions
+✅ **Solana → Optimism**: [kKsipWP5soSDXbzUKqQd6uEWDLUF93dtR64g6ZWz4UzV7njo1rayfRFyjAXH6M2UpZgcAyoLcdN8dSA9aQwUxh9](https://testnet.layerzeroscan.com/tx/kKsipWP5soSDXbzUKqQd6uEWDLUF93dtR64g6ZWz4UzV7njo1rayfRFyjAXH6M2UpZgcAyoLcdN8dSA9aQwUxh9)
+
+✅ **Optimism → Solana**: [0xf0a3f4792375d73288796132e2c782f51869afba13fae73934211ea39fb72ab6](https://testnet.layerzeroscan.com/tx/0xf0a3f4792375d73288796132e2c782f51869afba13fae73934211ea39fb72ab6)
+
 <br>
 
 Congratulations, you have now successfully set up an EVM <> Solana OApp.
